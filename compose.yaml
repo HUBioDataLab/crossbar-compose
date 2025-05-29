@@ -1,0 +1,306 @@
+services:
+
+  website:
+    image: ghcr.io/hubiodatalab/crossbar-website:main
+    hostname: website
+
+    labels:
+      - "traefik.enable=true"
+
+      # Listen to
+      - "traefik.http.routers.website-router.rule=Host(`${MAIN_DOMAIN}`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.website-router.service=website-service"
+      - "traefik.http.services.website-service.loadbalancer.server.port=80"
+
+      # TLS config
+      - "traefik.http.routers.website-router.tls=true"
+      - "traefik.http.routers.website-router.tls.certresolver=letsencrypt"
+
+      - "com.centurylinklabs.watchtower.enable=true"
+
+    expose:
+      - "80"
+    restart: always
+
+  neo4j:
+    image: neo4j:5.26.0-community-bullseye
+    hostname: neo4j
+    expose:
+      - "7474"
+      - "7687"
+
+    environment:
+      # Server config
+      - NEO4J_server_default__listen__address=0.0.0.0
+      - NEO4J_server_default__advertised__address=${NEO4J_DOMAIN}
+      
+      # Database config
+      - NEO4J_server_databases_default__to__read__only=true
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_usage__report_enabled=false
+      - NEO4J_dbms_security_auth__enabled=true
+        
+      # Bolt config
+      - NEO4J_server_bolt_enabled=true
+
+      # Bolt Security config
+      - NEO4J_server_bolt_tls__level=REQUIRED
+
+      - NEO4J_dbms_ssl_policy_bolt_enabled=true
+      - NEO4J_dbms_ssl_policy_bolt_base__directory=/var/lib/neo4j/certificates/bolt
+      - NEO4J_dbms_ssl_policy_bolt_private__key=private.key
+      - NEO4J_dbms_ssl_policy_bolt_public__certificate=public.crt
+      - NEO4J_dbms_ssl_policy_bolt_trust__all=false
+
+      # HTTPS SSL config
+      - NEO4J_dbms_ssl_policy_https_enabled=true
+      - NEO4J_dbms_ssl_policy_https_base__directory=/var/lib/neo4j/certificates/https
+      - NEO4J_dbms_ssl_policy_https_private__key=private.key
+      - NEO4J_dbms_ssl_policy_https_public__certificate=public.crt
+
+      # Memory config
+      - NEO4J_server_memory_heap_max__size=6g
+      - NEO4J_db_memory_transaction_max=2g
+
+      # Style config
+      - NEO4J_browser_remote__content__hostname__whitelist=raw.githubusercontent.com
+      - NEO4J_browser_post__connect__cmd=style https://raw.githubusercontent.com/HUBioDataLab/CROssBARv2/main/neo4j_browser/style.grass
+
+      - NEO4J_AUTH=${NEO4J_AUTH}
+
+
+    volumes:
+      - /var/lib/neo4j/data:/var/lib/neo4j/data
+      - neo4j-certificates:/var/lib/neo4j/certificates
+    depends_on:
+      - tls-dumper
+    restart: always
+    labels:
+      - "traefik.enable=true"
+
+      # Listen to
+      - "traefik.http.routers.neo4j-router.rule=Host(`${NEO4J_DOMAIN}`) && PathPrefix(`/browser`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.neo4j-router.service=neo4j-service"
+      - "traefik.http.services.neo4j-service.loadbalancer.server.port=7474"
+
+      # TLS config
+      - "traefik.http.routers.neo4j-router.tls=true"
+      - "traefik.http.routers.neo4j-router.tls.certresolver=letsencrypt"
+
+      - 'traefik.http.middlewares.neo4j-cors.headers.customResponseHeaders.Access-Control-Allow-Origin=https://${NEO4J_DOMAIN}/browser https://${NEO4J_DOMAIN}:7687'
+
+      # Tell traefik which middlewares we want to use on this container
+      - "traefik.http.routers.neo4j-router.middlewares=neo4j-cors"
+
+      # Neo4j browser websocket
+      # Listen to
+      - "traefik.http.routers.neo4j-bolt-router.rule=Host(`${NEO4J_DOMAIN}`)"
+      - "traefik.http.routers.neo4j-bolt-router.entrypoints=web,websecure,bolt"
+
+      # Proxy pass to
+      - "traefik.http.routers.neo4j-bolt-router.service=neo4j-bolt-service"
+      - "traefik.http.services.neo4j-bolt-service.loadbalancer.server.port=7687"
+
+      # TLS config
+      - "traefik.http.routers.neo4j-bolt-router.tls=true"
+      - "traefik.http.routers.neo4j-bolt-router.tls.certresolver=letsencrypt"
+
+      # Web Socket Secure Forwarding
+      - "traefik.http.middlewares.neo4j-bolt-sslheader.headers.customrequestheaders.X-Forwarded-Proto=https,wss"
+
+      - 'traefik.http.middlewares.neo4j-bolt-cors.headers.customResponseHeaders.Access-Control-Allow-Origin=https://${NEO4J_DOMAIN}/browser https://${NEO4J_DOMAIN}:7687'
+      
+      - "traefik.http.routers.neo4j-bolt-router.middlewares=neo4j-bolt-sslheader,neo4j-bolt-cors"
+
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  apollo:
+    image: ghcr.io/hubiodatalab/crossbar-graphql:main
+    hostname: apollo
+
+    deploy:
+      mode: replicated
+      replicas: 2
+
+    expose:
+      - "4000"
+
+    depends_on:
+      - neo4j
+
+    environment:
+      - NEO4J_USERNAME=${NEO4J_USERNAME}
+      - NEO4J_URI=${NEO4J_URI}
+      - NEO4J_DATABASE_NAME=${NEO4J_DATABASE_NAME}
+      - NEO4J_AUTH=${NEO4J_AUTH}
+      - MY_NEO4J_PASSWORD=${MY_NEO4J_PASSWORD}
+      - API_PORT=${API_PORT}
+
+
+    restart: always
+    
+    labels:
+      - "traefik.enable=true"
+
+      # Listen to
+      - "traefik.http.routers.api-router.rule=Host(`${MAIN_DOMAIN}`) && PathRegexp(`/api/?`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.api-router.service=api-service"
+      - "traefik.http.services.api-service.loadbalancer.server.port=4000"
+
+      # TLS config
+      - "traefik.http.routers.api-router.tls=true"
+      - "traefik.http.routers.api-router.tls.certresolver=letsencrypt"
+
+      - "traefik.http.middlewares.api-stripprefix.stripprefix.prefixes=/api"
+
+      - "traefik.http.routers.api-router.middlewares=api-stripprefix"
+
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  llm:
+
+    image: ghcr.io/hubiodatalab/crossbar-llm:main
+    hostname: llm
+
+    expose:
+      - "8501"
+
+    depends_on:
+      - neo4j
+
+    environment:
+      - NEO4J_USERNAME=${NEO4J_USERNAME}
+      - NEO4J_DATABASE_NAME=${NEO4J_DATABASE_NAME}
+      - NEO4J_URI=${NEO4J_URI}
+      - NEO4J_AUTH=${NEO4J_AUTH}
+      - MY_NEO4J_PASSWORD=${MY_NEO4J_PASSWORD}
+      - CSRF_SECRET_KEY=${CSRF_SECRET_KEY}
+
+    restart: always
+
+    deploy:
+      mode: replicated
+      replicas: 2
+
+    labels:
+      - "traefik.enable=true"
+
+      # LLM Root Path
+      # Listen to
+      - "traefik.http.routers.llm-router.rule=Host(`${MAIN_DOMAIN}`) && PathPrefix(`/llm`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.llm-router.service=llm-service"
+      - "traefik.http.services.llm-service.loadbalancer.server.port=8501"
+
+      # TLS config
+      - "traefik.http.routers.llm-router.tls=true"
+      - "traefik.http.routers.llm-router.tls.certresolver=letsencrypt"
+
+      - "traefik.http.middlewares.llm-stripprefix.stripprefix.prefixes=/llm" 
+      - "traefik.http.routers.llm-router.middlewares=llm-stripprefix"
+
+      # LLM API Path
+      # Listen to
+      - "traefik.http.routers.llm-api-router.rule=Host(`${MAIN_DOMAIN}`) && PathPrefix(`/llm/api`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.llm-api-router.service=llm-api-service"
+      - "traefik.http.services.llm-api-service.loadbalancer.server.port=8000"
+
+      # TLS config
+      - "traefik.http.routers.llm-api-router.tls=true"
+      - "traefik.http.routers.llm-api-router.tls.certresolver=letsencrypt"
+
+      - "traefik.http.middlewares.llm-api-stripprefix.stripprefix.prefixes=/llm/api"
+      - "traefik.http.middlewares.llm-api-ratelimit.ratelimit.average=3"
+      - "traefik.http.middlewares.llm-api-ratelimit.ratelimit.burst=5"
+      - "traefik.http.routers.llm-api-router.middlewares=llm-api-stripprefix,llm-api-ratelimit"
+
+  reverse-proxy:
+    image: traefik:v3.3.5
+    command:
+      - "--providers.docker"
+      - "--providers.docker.exposedbydefault=false"
+
+      # Logging
+      - "--log.level=DEBUG"
+      - "--accesslog=true"
+
+      # TLS Certification
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=hubiodatascilab@gmail.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=${ACME_JSON_PATH}"
+
+      # For production
+      # - "--certificatesresolvers.letsencrypt.acme.caServer=https://acme-v02.api.letsencrypt.org/directory"
+      # For testing
+      - "--certificatesresolvers.letsencrypt.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory"
+
+      # HTTP -> HTTPS
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+
+      - "--entryPoints.websecure.address=:443"
+      - "--entryPoints.bolt.address=:7687"
+
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "7687:7687"
+
+    volumes:
+      # So that Traefik can listen to Docker events
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+
+    restart: always
+
+
+  tls-dumper:
+    
+    image: ghcr.io/hubiodatalab/tls-dumper:main
+    
+    labels:
+      - "traefik.enable=false"
+      - "com.centurylinklabs.watchtower.enable=true"
+    
+    environment:
+      - ACME_JSON_PATH=${ACME_JSON_PATH}
+      - NEO4J_DOMAIN=${NEO4J_DOMAIN}
+    
+    volumes:
+      - letsencrypt:/letsencrypt
+      - neo4j-certificates:/letsencrypt/neo4j-certificates
+    
+    depends_on:
+      - reverse-proxy
+    restart: always
+
+
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    command:
+      - "--label-enable"
+      - "--rolling-restart"
+      - "--interval"
+      - "300"
+      - "--include-restarting"
+      - "--include-stopped"
+      - "--revive-stopped"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  letsencrypt:
+  neo4j-certificates:
