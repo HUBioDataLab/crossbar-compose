@@ -1,0 +1,31 @@
+services:
+  website:
+    image: ghcr.io/hubiodatalab/crossbar-website:main
+    hostname: website
+
+    labels:
+      - "traefik.enable=true"
+
+      # Listen to
+      - "traefik.http.routers.website-router.rule=Host(`${SUBDOMAIN}.${DOMAIN}`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.website-router.service=website-service"
+      - "traefik.http.services.website-service.loadbalancer.server.port=80"
+
+      # TLS config
+      - "traefik.http.routers.website-router.tls=true"
+      - "traefik.http.routers.website-router.tls.certresolver=letsencrypt"
+
+      - "com.centurylinklabs.watchtower.enable=true"
+
+    expose:
+      - "80"
+    restart: always
+
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

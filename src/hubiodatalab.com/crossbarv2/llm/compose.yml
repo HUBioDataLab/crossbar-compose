@@ -1,0 +1,127 @@
+services:
+  llm:
+
+    build:
+      context: ${BUILD_URL}
+      args:
+        - PUBLIC_URL=${PUBLIC_URL}
+
+    # hostname: ${SERVICE_NAME}
+
+    expose:
+      - "8501"
+
+    environment:
+      - CROSSBAR_ENV=${CROSSBAR_ENV}
+      - NEO4J_USERNAME=${MY_NEO4J_USERNAME}
+      - MY_NEO4J_PASSWORD=${MY_NEO4J_PASSWORD}
+      - NEO4J_DATABASE_NAME=${MY_NEO4J_DATABASE_NAME}
+      - NEO4J_URI=${MY_NEO4J_NEO4J_URI}
+      - CSRF_SECRET_KEY=${CSRF_SECRET_KEY}
+      
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+
+    restart: always
+
+    deploy:
+      mode: replicated
+      replicas: ${N_REPLICAS:-1}
+
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+        delay: 30s
+        monitor: 15s
+
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+      
+    healthcheck:
+      # This checks if the FastAPI docs or a specific /health endpoint is up
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"] 
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s # Give the LLM/FastAPI time to load models/keys
+
+    labels:
+      - "traefik.enable=true"
+
+      # LLM Root Path
+      # Listen to
+      - "traefik.http.routers.llm-${SERVICE_NAME}.rule=Host(`${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`${PUBLIC_URL}`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.llm-${SERVICE_NAME}.service=llm-${SERVICE_NAME}"
+      - "traefik.http.services.llm-${SERVICE_NAME}.loadbalancer.server.port=8501"
+
+      # TLS config
+      - "traefik.http.routers.llm-${SERVICE_NAME}.tls=true"
+      - "traefik.http.routers.llm-${SERVICE_NAME}.tls.certresolver=letsencrypt"
+
+      - "traefik.http.middlewares.llm-${SERVICE_NAME}-stripprefix.stripprefix.prefixes=${PUBLIC_URL}" 
+      - "traefik.http.routers.llm-${SERVICE_NAME}.middlewares=llm-${SERVICE_NAME}-stripprefix"
+
+      # LLM API Path
+      # Listen to
+      - "traefik.http.routers.llm-api-${SERVICE_NAME}.rule=Host(`${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`${PUBLIC_URL}/api`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.llm-api-${SERVICE_NAME}.service=llm-api-${SERVICE_NAME}"
+      - "traefik.http.services.llm-api-${SERVICE_NAME}.loadbalancer.server.port=8000"
+
+      # TLS config
+      - "traefik.http.routers.llm-api-${SERVICE_NAME}.tls=true"
+      - "traefik.http.routers.llm-api-${SERVICE_NAME}.tls.certresolver=letsencrypt"
+
+      - "traefik.http.middlewares.llm-api-${SERVICE_NAME}-stripprefix.stripprefix.prefixes=${PUBLIC_URL}/api"
+      - "traefik.http.middlewares.llm-api-${SERVICE_NAME}-ratelimit.ratelimit.average=3"
+      - "traefik.http.middlewares.llm-api-${SERVICE_NAME}-ratelimit.ratelimit.burst=5"
+      - "traefik.http.routers.llm-api-${SERVICE_NAME}.middlewares=llm-api-${SERVICE_NAME}-stripprefix,llm-api-${SERVICE_NAME}-ratelimit"
+      
+      # LLM Dashboard API Path (OAuth protected, proxied to backend)
+      # More specific than /dashboard, so Traefik auto-prioritizes this router
+      - "traefik.http.routers.llm-dashboard-api-${SERVICE_NAME}.rule=Host(`${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`${PUBLIC_URL}/dashboard/api`)"
+      - "traefik.http.routers.llm-dashboard-api-${SERVICE_NAME}.service=llm-dashboard-api-${SERVICE_NAME}"
+      - "traefik.http.services.llm-dashboard-api-${SERVICE_NAME}.loadbalancer.server.port=8000"
+      - "traefik.http.routers.llm-dashboard-api-${SERVICE_NAME}.tls=true"
+      - "traefik.http.routers.llm-dashboard-api-${SERVICE_NAME}.tls.certresolver=letsencrypt"
+      # Reuse the root stripprefix (strips only ${PUBLIC_URL}) so backend receives /dashboard/api/...
+      - "traefik.http.routers.llm-dashboard-api-${SERVICE_NAME}.middlewares=chain-auth@file,llm-${SERVICE_NAME}-stripprefix"
+      
+      # LLM Dashboard Path
+      # Listen to
+      - "traefik.http.routers.llm-dashboard-${SERVICE_NAME}.rule=Host(`${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`${PUBLIC_URL}/dashboard`)"
+      # Proxy pass to
+      - "traefik.http.routers.llm-dashboard-${SERVICE_NAME}.service=llm-dashboard-${SERVICE_NAME}"
+      - "traefik.http.services.llm-dashboard-${SERVICE_NAME}.loadbalancer.server.port=8501"
+
+      # TLS config
+      - "traefik.http.routers.llm-dashboard-${SERVICE_NAME}.tls=true"
+      - "traefik.http.routers.llm-dashboard-${SERVICE_NAME}.tls.certresolver=letsencrypt"
+
+      - "traefik.http.middlewares.llm-dashboard-${SERVICE_NAME}-slash.redirectregex.regex=^(.*${PUBLIC_URL}/dashboard)$$"
+      - "traefik.http.middlewares.llm-dashboard-${SERVICE_NAME}-slash.redirectregex.replacement=$${1}/"
+
+      - "traefik.http.middlewares.llm-dashboard-${SERVICE_NAME}-stripprefix.stripprefix.prefixes=${PUBLIC_URL}/dashboard"
+
+      - "traefik.http.routers.llm-dashboard-${SERVICE_NAME}.middlewares=llm-dashboard-${SERVICE_NAME}-slash,chain-auth@file,llm-dashboard-${SERVICE_NAME}-stripprefix"
+
+      # - "com.centurylinklabs.watchtower.enable=true"
+
+    volumes:
+      - ./logs/${SERVICE_NAME}:/crossbar_llm/backend/logs
+    
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

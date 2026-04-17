@@ -1,0 +1,52 @@
+services:
+  reverse-proxy:
+    image: traefik:v3.3.5
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "7687:7687"
+
+    volumes:
+      # So that Traefik can listen to Docker events
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt:rw
+      - ./config:/etc/traefik:ro
+      - /home/admin/www/crossbar-llm/reviewer-logs:/crossbar_llm/backend/logs
+
+    restart: always
+
+    networks:
+      - proxy
+
+  watchtower:
+    image: ghcr.io/nicholas-fedor/watchtower:latest
+    command:
+      - "--label-enable"
+      - "--rolling-restart"
+      - "--interval"
+      - "30"
+      - "--include-restarting"
+      - "--include-stopped"
+      - "--revive-stopped"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    
+    networks:
+      - proxy
+
+volumes:
+  letsencrypt:
+    external: true
+  neo4j-certificates:
+    external: true
+
+networks:
+  proxy:
+    external: true

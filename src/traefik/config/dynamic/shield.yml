@@ -1,0 +1,56 @@
+http:
+  middlewares:
+
+    # HSTS Wrapper (Security)
+    mw-hsts:
+      headers:
+
+        browserXssFilter: true
+        frameDeny: true
+
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+
+    # Header Stripper (Sanitization)
+    mw-strip:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-User: ""
+          X-Forwarded-Email: ""
+          X-Forwarded-Groups: ""
+          X-Forwarded-Preferred-Username: ""
+          Remote-User: ""
+          Remote-Groups: ""
+
+    # Auth Proxy (The Gatekeeper)
+    mw-auth-proxy:
+      forwardAuth:
+        address: "http://auth:4181" 
+
+        authResponseHeaders:
+          - "X-Forwarded-User"
+          - "X-Forwarded-Email"
+          - "X-Forwarded-Groups"
+          - "X-Forwarded-Preferred-Username"
+          - "Remote-User"
+          - "Remote-Groups"
+        
+        # Trust headers from the upstream (important for chains)
+        trustForwardHeader: true
+
+    # --- The Predefined Sets (Chains) ---
+
+    # Standard Service (No Auth)
+    chain-standard:
+      chain:
+        middlewares:
+          - mw-hsts         # 1. Wrap response with security
+          - mw-strip        # 2. Clean incoming headers
+
+    # Protected Service (With Auth)
+    chain-auth:
+      chain:
+        middlewares:
+          - mw-hsts         # 1. Wrap response with security
+          - mw-strip        # 2. Clean incoming headers
+          - mw-auth-proxy   # 3. Check login status

@@ -1,0 +1,37 @@
+services:
+
+  auth:
+    image: thomseddon/traefik-forward-auth
+    container_name: auth
+    environment:
+      - DEFAULT_PROVIDER=oidc
+      - AUTH_HOST=${SUBDOMAIN}.${DOMAIN}
+
+      - PROVIDERS_OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - PROVIDERS_OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - PROVIDERS_OIDC_ISSUER_URL=${OIDC_DISCOVERY_URL_SHORT}
+
+      - COOKIE_DOMAIN=${DOMAIN}
+      - SECRET=${AUTH_APP_SECRET}
+      - INSECURE_COOKIE=false
+
+      # Essential for compatibility with some apps, will prove useful in the future
+      - SCOPES=openid profile email
+      - CLAIM=email
+
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.auth.loadbalancer.server.port=4181"
+
+      - "traefik.http.routers.auth.rule=Host(`${SUBDOMAIN}.${DOMAIN}`)"
+
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls.certresolver=letsencrypt"
+
+      - "traefik.http.routers.auth.middlewares=chain-standard@file"
+
+networks:
+  proxy:
+    external: true

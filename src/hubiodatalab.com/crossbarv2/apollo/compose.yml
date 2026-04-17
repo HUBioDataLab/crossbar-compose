@@ -1,0 +1,47 @@
+services:
+  apollo:
+    image: ghcr.io/hubiodatalab/crossbar-graphql:main
+    hostname: apollo
+
+    deploy:
+      mode: replicated
+      replicas: 2
+
+    expose:
+      - "4000"
+
+    restart: always
+
+    environment:
+      - NEO4J_USERNAME=${MY_NEO4J_USERNAME}
+      - MY_NEO4J_PASSWORD=${MY_NEO4J_PASSWORD}
+      - NEO4J_URI=${MY_NEO4J_BOLT_URI}
+      - NEO4J_DATABASE_NAME=${MY_NEO4J_DATABASE_NAME}
+      - API_PORT=4000
+
+    labels:
+      - "traefik.enable=true"
+
+      # Listen to
+      - "traefik.http.routers.api-router.rule=Host(`${SUBDOMAIN}.${DOMAIN}`) && PathRegexp(`/api/?`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.api-router.service=api-service"
+      - "traefik.http.services.api-service.loadbalancer.server.port=4000"
+
+      # TLS config
+      - "traefik.http.routers.api-router.tls=true"
+      - "traefik.http.routers.api-router.tls.certresolver=letsencrypt"
+
+      - "traefik.http.middlewares.api-stripprefix.stripprefix.prefixes=/api"
+
+      - "traefik.http.routers.api-router.middlewares=api-stripprefix"
+
+      - "com.centurylinklabs.watchtower.enable=true"
+
+    networks:
+      - proxy
+  
+networks:
+  proxy:
+    external: true

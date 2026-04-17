@@ -1,0 +1,137 @@
+services:
+  neo4j:
+    image: neo4j:5.26.0-community-bullseye
+    hostname: neo4j
+    expose:
+      - "7474"
+      - "7687"
+
+    volumes:
+      - /var/lib/neo4j/data:/var/lib/neo4j/data
+      - neo4j-certificates:/var/lib/neo4j/certificates
+
+    # depends_on:
+    #   - tls-dumper
+
+    restart: always
+
+    networks:
+      - proxy
+      - internal
+
+    environment:
+
+      # Server config
+      - NEO4J_server_default__listen__address=0.0.0.0
+      - NEO4J_server_default__advertised__address=${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}
+      
+      # Database config
+      - NEO4J_server_databases_default__to__read__only=true
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_usage__report_enabled=false
+      - NEO4J_dbms_security_auth__enabled=false
+        
+      # Bolt config
+      - NEO4J_server_bolt_enabled=true
+
+      # Bolt Security config
+      - NEO4J_server_bolt_tls__level=OPTIONAL
+
+      - NEO4J_dbms_ssl_policy_bolt_enabled=true
+      - NEO4J_dbms_ssl_policy_bolt_base__directory=/var/lib/neo4j/certificates/bolt
+      - NEO4J_dbms_ssl_policy_bolt_private__key=private.key
+      - NEO4J_dbms_ssl_policy_bolt_public__certificate=public.crt
+      - NEO4J_dbms_ssl_policy_bolt_trust__all=true
+
+      # HTTPS SSL config
+      - NEO4J_dbms_ssl_policy_https_enabled=true
+      - NEO4J_dbms_ssl_policy_https_base__directory=/var/lib/neo4j/certificates/https
+      - NEO4J_dbms_ssl_policy_https_private__key=private.key
+      - NEO4J_dbms_ssl_policy_https_public__certificate=public.crt
+
+      # Memory config
+      - NEO4J_server_memory_heap_max__size=6g
+      - NEO4J_db_memory_transaction_max=3g
+
+      # Style config
+      - NEO4J_browser_remote__content__hostname__whitelist=raw.githubusercontent.com
+      - NEO4J_browser_post__connect__cmd=style https://raw.githubusercontent.com/HUBioDataLab/CROssBARv2-KG/main/neo4j_browser/style.grass
+
+      - NEO4J_AUTH=${MY_NEO4J_USERNAME}/${MY_NEO4J_PASSWORD}
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+
+      # Listen to
+      - "traefik.http.routers.neo4j-router.rule=Host(`${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`/browser`)"
+
+      # Proxy pass to
+      - "traefik.http.routers.neo4j-router.service=neo4j-service"
+      - "traefik.http.services.neo4j-service.loadbalancer.server.port=7474"
+
+      # TLS config
+      - "traefik.http.routers.neo4j-router.tls=true"
+      - "traefik.http.routers.neo4j-router.tls.certresolver=letsencrypt"
+
+      - 'traefik.http.middlewares.neo4j-cors.headers.customResponseHeaders.Access-Control-Allow-Origin=https://${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}/browser https://${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}:7687'
+
+      # Tell traefik which middlewares we want to use on this container
+      - "traefik.http.routers.neo4j-router.middlewares=neo4j-cors"
+
+      # Neo4j browser websocket
+      # Listen to
+      - "traefik.http.routers.neo4j-bolt-router.rule=Host(`${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}`)" # && Path(`/bolt`)"
+      - "traefik.http.routers.neo4j-bolt-router.entrypoints=web,websecure,bolt"
+
+      # Proxy pass to
+      - "traefik.http.routers.neo4j-bolt-router.service=neo4j-bolt-service"
+      - "traefik.http.services.neo4j-bolt-service.loadbalancer.server.port=7687"
+
+      # TLS config
+      - "traefik.http.routers.neo4j-bolt-router.tls=true"
+      - "traefik.http.routers.neo4j-bolt-router.tls.certresolver=letsencrypt"
+
+      # Define a new middleware to strip the URL prefix before sending it to static-files
+      - "traefik.http.middlewares.neo4j-bolt-stripprefix.stripprefix.prefixes=/bolt"
+
+      # Web Socket Secure Forwarding
+      - "traefik.http.middlewares.neo4j-bolt-sslheader.headers.customrequestheaders.X-Forwarded-Proto=https,wss"
+
+      - 'traefik.http.middlewares.neo4j-bolt-cors.headers.customResponseHeaders.Access-Control-Allow-Origin=https://${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}/browser https://${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}:7687'
+      
+      - "traefik.http.routers.neo4j-bolt-router.middlewares=neo4j-bolt-sslheader,neo4j-bolt-cors" # neo4j-bolt-stripprefix,
+
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  tls-dumper:
+    
+    build: ./tls-dumper
+    image: tls-dumper
+    
+    labels:
+      traefik.enable: false
+    
+    environment:
+      - ACME_JSON_PATH=/letsencrypt/${DOMAIN}.json
+      - NEO4J_DOMAIN=${SUBSUBDOMAIN}.${SUBDOMAIN}.${DOMAIN}
+    
+    volumes:
+      - letsencrypt:/letsencrypt
+      - neo4j-certificates:/letsencrypt/neo4j-certificates
+    
+    restart: always
+
+    networks:
+      - internal
+
+volumes:
+  letsencrypt:
+    external: true
+  neo4j-certificates:
+    external: true
+
+networks:
+  proxy:
+    external: true
+  internal:
