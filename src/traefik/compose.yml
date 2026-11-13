@@ -27,11 +27,12 @@ services:
 
   watchtower:
     image: ghcr.io/nicholas-fedor/watchtower:latest
+    restart: always
     command:
       - "--label-enable"
       - "--rolling-restart"
       - "--interval"
-      - "30"
+      - "300"
       - "--include-restarting"
       - "--include-stopped"
       - "--revive-stopped"

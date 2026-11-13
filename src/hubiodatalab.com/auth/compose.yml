@@ -1,6 +1,7 @@
 services:
 
   auth:
+    restart: always
     image: thomseddon/traefik-forward-auth
     container_name: auth
     environment:
