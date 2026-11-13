@@ -1,0 +1,3 @@
+#!/bin/bash
+# Replaced 2026-11-13: all LLM instances are handled by update-llm-instances (one at a time, with a lock).
+exec /home/admin/.scripts/update-llm-instances

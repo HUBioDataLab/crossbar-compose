@@ -1,0 +1,66 @@
+#!/bin/bash
+# Rebuild CROssBAR LLM instances when their GitHub branch has a new commit.
+# One instance at a time, never two runs in parallel. A commit is recorded as
+# done only after the rebuild succeeded and every container of the instance is
+# healthy, so failed rebuilds are retried on the next run.
+# DRY_RUN=1 only prints what would be rebuilt.
+
+REPO="HUBioDataLab/CROssBAR_LLM"
+LLM_DIR="${LLM_DIR:-/home/admin/test/hubiodatalab.com/crossbarv2/llm}"
+STATE_DIR="${STATE_DIR:-/home/admin/.scripts/state}"  # survives reboots, unlike /tmp
+LOCK="${LOCK:-$STATE_DIR/update.lock}"                # reboot-if-down skips while this is held
+LOG="${LOG:-$STATE_DIR/update.log}"
+HEALTH_TRIES="${HEALTH_TRIES:-60}"                    # 60 x 5s = 5 minutes
+
+# instance=branch, in update order
+INSTANCES=("staging=dev" "main=main" "reviewer=main")
+
+log() { echo "$(date -u +%FT%TZ) $*" >> "$LOG"; }
+
+head_sha() {
+  curl -fsS "https://api.github.com/repos/$REPO/branches/$1" | jq -r '.commit.sha // empty'
+}
+
+all_healthy() {
+  local ids i
+  for i in $(seq 1 "$HEALTH_TRIES"); do
+    ids=$(docker ps -q --filter "label=com.docker.compose.project=llm-$1")
+    if [ -n "$ids" ] && ! docker inspect -f '{{.State.Health.Status}}' $ids | grep -qv '^healthy$'; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
+mkdir -p "$STATE_DIR"
+[ -f "$LOG" ] && [ "$(stat -c %s "$LOG")" -gt 5000000 ] && mv -f "$LOG" "$LOG.1"
+exec 9>"$LOCK"
+flock -n 9 || exit 0  # another run is still going
+cd "$LLM_DIR" || { log "cannot cd to $LLM_DIR"; exit 1; }
+
+for pair in "${INSTANCES[@]}"; do
+  ins=${pair%%=*}
+  branch=${pair#*=}
+
+  sha=$(head_sha "$branch")
+  if [ -z "$sha" ]; then
+    log "$ins: could not read the $branch head from GitHub, skipping"
+    continue
+  fi
+  done_sha=$(cat "$STATE_DIR/$ins" 2>/dev/null)
+  [ "$sha" = "$done_sha" ] && continue
+
+  if [ -n "$DRY_RUN" ]; then
+    echo "$ins: would rebuild ($branch at ${sha:0:7}, last done ${done_sha:0:7})"
+    continue
+  fi
+
+  log "$ins: $branch is at ${sha:0:7}, rebuilding"
+  if make update INS="$ins" >> "$LOG" 2>&1 && all_healthy "$ins"; then
+    echo "$sha" > "$STATE_DIR/$ins"
+    log "$ins: updated to ${sha:0:7}, all containers healthy"
+  else
+    log "$ins: FAILED at ${sha:0:7}, will retry on the next run"
+  fi
+done

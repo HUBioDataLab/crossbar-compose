@@ -1,0 +1,6 @@
+# Root crontab on hel (sudo crontab -l), kept here for reference.
+# update-llm and stage-llm both run update-llm-instances, which updates one instance at a time under a lock.
+*/20 * * * * /home/admin/.scripts/update-llm >/dev/null 2>&1
+*/10 * * * * /home/admin/.scripts/stage-llm >/dev/null 2>&1
+*/30 * * * * /home/admin/.scripts/reboot-if-down >/dev/null 2>&1
+0 * * * * docker system prune -a --force >/dev/null 2>&1

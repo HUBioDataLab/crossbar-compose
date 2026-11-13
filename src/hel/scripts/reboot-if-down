@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Do not reboot while an LLM update is running
+flock -n /home/admin/.scripts/state/update.lock true || exit 0
+
+# The URL for your LLM service
+URL="https://crossbarv2.hubiodatalab.com/llm"
+
+# Get the HTTP status code
+# -s: silent, -o: discard body, -w: return only the code
+STATUS=$(/usr/bin/curl -s -L -o /dev/null -w "%{http_code}" "$URL")
+
+# If status is not 200, trigger a reboot
+if [ "$STATUS" -ne 200 ]; then
+    echo "$(date): Service returned $STATUS. Rebooting server..." >> /var/log/health_reboots.log
+    /sbin/reboot
+fi
